@@ -115,6 +115,7 @@ type popup struct {
 	list       *gtk.ListBox
 	client     *client.Client
 	visible    bool
+	shownAt    time.Time
 	hasTimeout bool
 
 	rows []client.DeviceInfo
@@ -134,9 +135,12 @@ func newPopup() *popup {
 	layershell.SetNamespace(win, "doubletake-bar")
 	layershell.SetLayer(win, layershell.LAYER_SHELL_LAYER_OVERLAY)
 	layershell.SetAnchor(win, layershell.LAYER_SHELL_EDGE_TOP, true)
-	layershell.SetAnchor(win, layershell.LAYER_SHELL_EDGE_RIGHT, true)
+	layershell.SetAnchor(win, layershell.LAYER_SHELL_EDGE_LEFT, true)
 	layershell.SetMargin(win, layershell.LAYER_SHELL_EDGE_TOP, 34)
-	layershell.SetMargin(win, layershell.LAYER_SHELL_EDGE_RIGHT, 8)
+	// Approximates where the bar icon sits among modules-left; waybar is a
+	// separate process so this can't be read live and may need hand-tuning
+	// if modules-left changes width (e.g. workspace count, weather string).
+	layershell.SetMargin(win, layershell.LAYER_SHELL_EDGE_LEFT, 110)
 	layershell.SetKeyboardMode(win, layershell.LAYER_SHELL_KEYBOARD_MODE_ON_DEMAND)
 
 	content, _ := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 2)
@@ -161,6 +165,17 @@ func newPopup() *popup {
 		if keyEvent.KeyVal() == gdk.KEY_Escape {
 			p.hide()
 			return true
+		}
+		return false
+	})
+	// Hyprland briefly grants then revokes keyboard focus to a freshly
+	// mapped on-demand-keyboard layer surface; honoring focus-out instantly
+	// raced that and tore the surface down right after it appeared. A short
+	// grace period after show() lets that settle while still dismissing on
+	// a genuine click outside.
+	win.Connect("focus-out-event", func() bool {
+		if p.visible && time.Since(p.shownAt) > 300*time.Millisecond {
+			p.hide()
 		}
 		return false
 	})
@@ -203,6 +218,7 @@ func (p *popup) show() {
 	p.win.ShowAll()
 	p.win.Present()
 	p.visible = true
+	p.shownAt = time.Now()
 	if !p.hasTimeout {
 		p.hasTimeout = true
 		glib.TimeoutAdd(2000, func() bool {

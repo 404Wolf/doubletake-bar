@@ -24,7 +24,7 @@ func runStatus() {
 	resp, err := c.Status()
 	if err != nil {
 		printWaybar(waybarOutput{
-			Text:    "🖵",
+			Text:    appleIcon,
 			Class:   "unavailable",
 			Tooltip: "doubletake daemon is not running",
 		})
@@ -45,24 +45,29 @@ func runStatus() {
 	switch {
 	case len(streaming) > 0:
 		printWaybar(waybarOutput{
-			Text:    "📡",
+			Text:    appleIcon,
 			Class:   "streaming",
 			Tooltip: "AirPlay: mirroring to " + strings.Join(streaming, ", "),
 		})
 	case pinWaiting:
 		printWaybar(waybarOutput{
-			Text:    "🔑",
+			Text:    appleIcon,
 			Class:   "pairing",
 			Tooltip: "AirPlay: waiting for PIN",
 		})
 	default:
 		printWaybar(waybarOutput{
-			Text:    "🖵",
+			Text:    appleIcon,
 			Class:   "idle",
 			Tooltip: "AirPlay: not mirroring",
 		})
 	}
 }
+
+// appleIcon is the Font Awesome "apple" glyph (nf-fa-apple). It renders
+// consistently with this bar's other Nerd Font module icons, unlike an emoji
+// glyph (e.g. 🖵), which sat noticeably off the bar's vertical center.
+const appleIcon = ""
 
 func printWaybar(o waybarOutput) {
 	_ = json.NewEncoder(os.Stdout).Encode(o)
