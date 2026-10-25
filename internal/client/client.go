@@ -5,6 +5,7 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -102,6 +103,9 @@ func (c *Client) send(req Request) (*Response, error) {
 	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
+	if !resp.OK {
+		return &resp, fmt.Errorf("doubletake: %s", resp.Error)
+	}
 	return &resp, nil
 }
 
@@ -139,4 +143,37 @@ func (c *Client) Running() bool {
 	}
 	conn.Close()
 	return true
+}
+
+// Watch receives full snapshots from a daemon with the bundled watch patch.
+// It never polls. The caller may reconnect after an error (e.g. daemon restart).
+func (c *Client) Watch(ctx context.Context, update func(Response)) error {
+	conn, err := (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "unix", c.SocketPath)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			conn.Close()
+		case <-done:
+		}
+	}()
+	if err := json.NewEncoder(conn).Encode(Request{Cmd: "watch"}); err != nil {
+		return err
+	}
+	dec := json.NewDecoder(conn)
+	for {
+		var resp Response
+		if err := dec.Decode(&resp); err != nil {
+			return err
+		}
+		if !resp.OK {
+			return fmt.Errorf("daemon watch: %s (install patches/doubletake-watch.patch)", resp.Error)
+		}
+		update(resp)
+	}
 }

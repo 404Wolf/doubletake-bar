@@ -1,4 +1,4 @@
-// doubletake-bar is a waybar status module plus a tiny GTK dropdown for
+// doubletake-bar is a native tray menu and a CLI status command for
 // doubletake (an AirPlay mirroring sender). It talks to a running
 // `doubletake -daemonize` over its control socket.
 package main
@@ -17,7 +17,7 @@ var log *zap.Logger
 func main() {
 	root := &cobra.Command{
 		Use:           "doubletake-bar",
-		Short:         "Waybar status module + GTK dropdown for doubletake (AirPlay sender)",
+		Short:         "Native AirPlay tray menu for doubletake (AirPlay sender)",
 		SilenceUsage:  true,
 		SilenceErrors: false,
 	}
@@ -33,16 +33,7 @@ func main() {
 		},
 	})
 
-	root.AddCommand(&cobra.Command{
-		Use:   "popup",
-		Short: "Toggle the AirPlay device dropdown (or become it, if none is running)",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			log = logging.New("popup")
-			defer log.Sync()
-			runPopup()
-			return nil
-		},
-	})
+	root.AddCommand(&cobra.Command{Use: "tray", Aliases: []string{"popup"}, Short: "Run the native AirPlay tray menu", RunE: func(cmd *cobra.Command, args []string) error { return runTray() }})
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
