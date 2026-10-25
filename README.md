@@ -1,46 +1,69 @@
 # doubletake-bar
 
-A waybar status module and GTK dropdown for [doubletake](https://github.com/omarroth/doubletake),
-an AirPlay mirroring *sender* for Linux. Lets you see and switch AirPlay
-targets from a bar icon the way macOS's AirPlay menu works, instead of the
-command line.
+A native AirPlay tray menu for [doubletake](https://github.com/omarroth/doubletake),
+an AirPlay mirroring sender for Linux. Runs alongside `doubletake -daemonize` and
+exports a StatusNotifierItem and `com.canonical.dbusmenu` using
+[fyne.io/systray](https://github.com/fyne-io/systray). Waybar's `tray` module renders
+its menu with the same GTK theme, hover effects, separators, submenus and
+checkboxes as nm-applet. There is no custom popup, positioning code or CSS.
 
-Talks to a running `doubletake -daemonize` over its Unix control socket
-(`$XDG_RUNTIME_DIR/doubletake.sock`).
+## Run
 
-## Commands
+Run `doubletake-bar tray` once per graphical session, preferably as a systemd user
+service. Enable Waybar's `tray` module and remove any `custom/airplay` module.
+Right-click the tray icon for the menu:
 
-- `doubletake-bar status` — prints one line of [waybar `custom/*` module
-  JSON](https://github.com/Alexays/Waybar/wiki/Module:-Custom) (`text`,
-  `tooltip`, `class`) reflecting whether doubletake is idle, streaming, or
-  waiting for a pairing PIN. Meant to be polled on an interval.
-- `doubletake-bar popup` — opens (or, if already open, closes) a small
-  dropdown anchored top-right via `gtk-layer-shell`, listing devices
-  discovered by the daemon. Click a device to connect; click the active one
-  to disconnect. A device that needs pairing shows an inline PIN entry.
-  Running it again while the popup is already up just toggles it, via its
-  own control socket (`$XDG_RUNTIME_DIR/doubletake-bar.sock`) — so one waybar
-  `on-click` handler works for both opening and closing it.
+- Disabled **AirPlay** header and discovered receivers; the mirroring receiver is checked.
+  Select an idle receiver to connect, or an active receiver to disconnect.
+- **Stop mirroring** disconnects every stream, including connections in progress.
+- Per-receiver submenus provide **Disconnect**, **Mute audio** (when audio is available),
+  and **Enter PIN…** / **Enter password…** during pairing. Selecting a receiver awaiting
+  credentials also opens the prompt. dbusmenu has no entry widget, so credentials
+  use a standard Zenity GTK dialog. Cancellation leaves pairing pending.
+- **Rescan** starts a fresh bounded mDNS browse; doubletake also continuously
+  browses mDNS in five-second scan windows, expiring receivers after 30 seconds.
 
-## Waybar wiring
+The display icon is gray when idle, amber while connecting/pairing, blue while
+mirroring, and dimmed when unavailable. Its tooltip describes the current state.
+Receiver, state and audio changes arrive as push snapshots; there is no status
+polling. The tray reconnects after a daemon restart (one-second retry backoff).
 
-```jsonc
-"custom/airplay": {
-  "exec": "doubletake-bar status",
-  "return-type": "json",
-  "interval": 5,
-  "on-click": "doubletake-bar popup"
-}
+## Daemon event support (required)
+
+Unmodified doubletake v0.5.0 supports only request/response commands. Apply
+[`patches/doubletake-watch.patch`](patches/doubletake-watch.patch) to that version.
+The patch adds a `watch` request on the existing private Unix control socket,
+returning an initial newline-delimited JSON snapshot and a fresh snapshot on
+observable changes. Snapshots contain both `devices` and `streams`. Slow clients
+retain the latest snapshot; disconnected clients are removed. Existing commands
+and their response format are unchanged. The patch includes a subscription test.
+The flake exports it as `patches.${system}.default` for downstream packaging:
+
+```nix
+doubletake = (final.callPackage ./packages/doubletake.nix { }).overrideAttrs (old: {
+  patches = (old.patches or []) ++ [ inputs.doubletake-bar.patches.${laptopSystem}.default ];
+});
 ```
 
-## Build
+Without the patch the menu reports that the daemon is unavailable; it does not
+silently fall back to polling. The socket defaults to
+`$XDG_RUNTIME_DIR/doubletake.sock` (or `/tmp/doubletake.sock`).
+
+## CLI compatibility
+
+- `doubletake-bar status` still prints Waybar custom-module JSON once.
+- `doubletake-bar popup` is retained as an alias for `tray`. The old layer-shell
+  popup and toggle socket have been removed; use the tray icon to open/close the
+  native menu. A second tray instance exits with an explanatory error.
+
+## Build and test
 
 ```sh
 nix build
-# or, for local iteration:
 nix develop
-go build -tags gtk_3_24 ./cmd/doubletake-bar
+go test -race ./...
+go build ./cmd/doubletake-bar
 ```
 
-The `gtk_3_24` build tag works around a gotk3 upstream bug where its
-version-detection build constraints miscompile against recent GTK3.
+The tray is pure Go on Linux (no gotk3 or layer-shell dependencies). The Nix
+package wraps Zenity onto PATH for pairing and error dialogs.

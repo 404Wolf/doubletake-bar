@@ -1,54 +1,48 @@
 {
-  description = "Waybar status module + GTK dropdown for doubletake (AirPlay sender for Linux)";
-
+  description = "Native AirPlay tray menu for doubletake";
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
   };
-
   outputs =
-    { self, nixpkgs, flake-utils }:
+    {
+      self,
+      nixpkgs,
+      flake-utils,
+    }:
     flake-utils.lib.eachDefaultSystem (
       system:
       let
         pkgs = import nixpkgs { inherit system; };
-        gtkDeps = [
-          pkgs.gtk3
-          pkgs.glib
-          pkgs.gtk-layer-shell
-        ];
       in
       {
+        # Apply to doubletake v0.5.0 for event-driven daemon snapshots.
+        patches.default = ./patches/doubletake-watch.patch;
         packages.default = pkgs.buildGoModule {
           pname = "doubletake-bar";
-          version = "0.1.0";
+          version = "0.2.0";
           src = ./.;
-          vendorHash = "sha256-vvplv6itph5breC2H9M7jV7AbpaykmfFJY21K81DwGI=";
-
-          # GTK3 on this nixpkgs commit needs this build tag or gotk3's gdk
-          # package fails to compile (an upstream version-detection bug).
-          tags = [ "gtk_3_24" ];
-
-          nativeBuildInputs = [ pkgs.pkg-config ];
-          buildInputs = gtkDeps;
-
+          vendorHash = "sha256-z6izC/+UUno4BxK4KpGP4f0BBqlgk/9zY2/USoenXOM=";
+          env.CGO_ENABLED = 0;
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+          postInstall = ''
+            wrapProgram $out/bin/doubletake-bar --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.zenity ]}
+          '';
           meta = {
-            description = "Waybar module + GTK dropdown for doubletake (AirPlay sender for Linux)";
+            description = "Native AirPlay tray menu for doubletake";
             homepage = "https://github.com/404wolf/doubletake-bar";
             license = pkgs.lib.licenses.mit;
             mainProgram = "doubletake-bar";
             platforms = pkgs.lib.platforms.linux;
           };
         };
-
         devShells.default = pkgs.mkShell {
           packages = [
             pkgs.go
-            pkgs.pkg-config
             pkgs.gopls
-          ] ++ gtkDeps;
+            pkgs.zenity
+          ];
         };
-
         formatter = pkgs.nixfmt-rfc-style;
       }
     );
