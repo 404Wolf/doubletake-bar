@@ -20,7 +20,7 @@ Right-click the tray icon for the menu:
   and **Enter PIN…** / **Enter password…** during pairing. Selecting a receiver awaiting
   credentials also opens the prompt. dbusmenu has no entry widget, so credentials
   use a standard Zenity GTK dialog. Cancellation leaves pairing pending.
-- **Rescan** requests the daemon's discovery results; doubletake continuously
+- **Rescan** starts a fresh bounded mDNS browse; doubletake also continuously
   browses mDNS in five-second scan windows, expiring receivers after 30 seconds.
 
 The display icon is gray when idle, amber while connecting/pairing, blue while

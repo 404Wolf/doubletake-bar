@@ -74,16 +74,44 @@
  	return d.statusResponseLocked(true, "")
  }
  
-@@ -679,7 +686,7 @@
+@@ -677,19 +684,39 @@
+ 	return client.RestorePairingCredentials(saved)
+ }
  
++// handleDiscover performs a bounded fresh browse without holding the state lock.
++// Merge results so an overlapping background browse cannot discard known receivers.
  func (d *Daemon) handleDiscover() Response {
++	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
++	defer cancel()
++	found, err := airplay.DiscoverAirPlayDevices(ctx)
  	d.mu.Lock()
 -	defer d.mu.Unlock()
+-	return Response{
+-		OK:      true,
+-		State:   d.overallStateLocked(),
+-		Devices: toDeviceInfos(d.devices),
 +	defer d.unlockAndNotify()
- 	return Response{
- 		OK:      true,
- 		State:   d.overallStateLocked(),
-@@ -689,7 +696,7 @@
++	if err != nil {
++		return Response{OK: false, Error: err.Error(), Devices: toDeviceInfos(d.devices)}
++	}
++	now := time.Now()
++	for _, dev := range found {
++		d.deviceLastSeen[dev.IP] = now
++		replaced := false
++		for i := range d.devices {
++			if d.devices[i].IP == dev.IP {
++				d.devices[i] = dev
++				replaced = true
++				break
++			}
++		}
++		if !replaced {
++			d.devices = append(d.devices, dev)
++		}
+ 	}
++	sort.Slice(d.devices, func(i, j int) bool { return d.devices[i].IP < d.devices[j].IP })
++	return Response{OK: true, State: d.overallStateLocked(), Devices: toDeviceInfos(d.devices)}
+ }
  
  func (d *Daemon) handleDevices() Response {
  	d.mu.Lock()
@@ -92,7 +120,7 @@
  	return Response{
  		OK:      true,
  		State:   d.overallStateLocked(),
-@@ -700,7 +707,7 @@
+@@ -700,7 +727,7 @@
  func (d *Daemon) handleConnect(req Request) Response {
  	d.mu.Lock()
  	if d.shuttingDown {
@@ -101,7 +129,7 @@
  		return Response{OK: false, State: StateIdle, Error: "daemon is shutting down"}
  	}
  
-@@ -714,13 +721,13 @@
+@@ -714,13 +741,13 @@
  			switch len(pending) {
  			case 0:
  				state := d.overallStateLocked()
@@ -117,7 +145,7 @@
  				return Response{OK: false, State: state, Error: "multiple devices are waiting for credentials; specify a target"}
  			}
  		}
-@@ -728,7 +735,7 @@
+@@ -728,7 +755,7 @@
  		if entry, ok := d.streams[target]; ok {
  			if entry.state != StatePINRequired || entry.credentialCh == nil {
  				state := d.overallStateLocked()
@@ -126,7 +154,7 @@
  				return Response{OK: false, State: state, Error: "credential prompt is not ready for " + target}
  			}
  			entry.state = StateConnecting
-@@ -737,7 +744,7 @@
+@@ -737,7 +764,7 @@
  			// credentialCh is buffered and each pending session can be claimed only once.
  			entry.credentialCh <- req.Pin
  			state := d.overallStateLocked()
@@ -135,7 +163,7 @@
  			return Response{OK: true, State: state, Device: target, DeviceIP: target}
  		}
  		// No existing entry means this is a new targeted connection with a
-@@ -749,7 +756,7 @@
+@@ -749,7 +776,7 @@
  	if target != "" {
  		if existing, ok := d.streams[target]; ok {
  			st := existing.state
@@ -144,7 +172,7 @@
  			return Response{OK: false, State: st, Error: "already connected or connecting to " + target}
  		}
  	}
-@@ -760,7 +767,7 @@
+@@ -760,7 +787,7 @@
  		target, port = d.pickFreeDeviceLocked(port)
  		if target == "" {
  			state := d.overallStateLocked()
@@ -153,7 +181,7 @@
  			return Response{OK: false, State: state, Error: "no available devices found"}
  		}
  	}
-@@ -792,7 +799,7 @@
+@@ -792,7 +819,7 @@
  	// Add while holding d.mu, before Shutdown can mark the daemon closed and
  	// begin waiting. This is the WaitGroup's required Add-before-Wait ordering.
  	d.streamWorkers.Add(1)
@@ -162,7 +190,7 @@
  
  	go func() {
  		defer d.streamWorkers.Done()
-@@ -800,7 +807,7 @@
+@@ -800,7 +827,7 @@
  	}()
  
  	d.mu.Lock()
@@ -171,7 +199,7 @@
  	return Response{OK: true, State: d.overallStateLocked(), Device: target}
  }
  
-@@ -855,7 +862,7 @@
+@@ -855,7 +882,7 @@
  		// A user-requested disconnect removes the entry before closing its client.
  		// Ignore the resulting read/handshake error from that obsolete goroutine.
  		if d.streams[target] != entry {
@@ -180,7 +208,7 @@
  			return
  		}
  		if failure != "" {
-@@ -863,7 +870,7 @@
+@@ -863,7 +890,7 @@
  			d.lastErrorTarget = target
  		}
  		cleanup := d.detachStreamLocked(target)
@@ -189,7 +217,7 @@
  
  		if failure != "" {
  			log.Printf("[daemon] %s", failure)
-@@ -888,7 +895,7 @@
+@@ -888,7 +915,7 @@
  				break
  			}
  		}
@@ -198,7 +226,7 @@
  		if next == nil {
  			next = airplay.NewAirPlayClient(target, port)
  		}
-@@ -901,12 +908,12 @@
+@@ -901,12 +928,12 @@
  		// interrupt GetInfo, pairing, or a pending credential wait.
  		d.mu.Lock()
  		if d.streams[target] != entry {
@@ -213,7 +241,7 @@
  
  		nextInfo, err := next.GetInfo()
  		if err != nil {
-@@ -915,12 +922,12 @@
+@@ -915,12 +942,12 @@
  
  		d.mu.Lock()
  		if d.streams[target] != entry {
@@ -228,7 +256,7 @@
  		return next, nextInfo, nil
  	}
  
-@@ -971,11 +978,11 @@
+@@ -971,11 +998,11 @@
  	waitForCredential := func(kind CredentialKind) (string, error) {
  		d.mu.Lock()
  		if d.streams[target] != entry {
@@ -242,7 +270,7 @@
  
  		// Do not expose the PIN prompt until the receiver has accepted the request
  		// to display one. Password mode deliberately never touches this endpoint.
-@@ -985,18 +992,18 @@
+@@ -985,18 +1012,18 @@
  				if d.streams[target] == entry {
  					entry.credentialKind = ""
  				}
@@ -264,7 +292,7 @@
  
  		log.Printf("[daemon] %s required for %s — waiting for user input", kind, info.Name)
  		select {
-@@ -1007,7 +1014,7 @@
+@@ -1007,7 +1034,7 @@
  			if d.streams[target] == entry {
  				entry.credentialKind = ""
  			}
@@ -273,7 +301,7 @@
  			return "", ctx.Err()
  		}
  	}
-@@ -1139,7 +1146,7 @@
+@@ -1139,7 +1166,7 @@
  				if entry.captureGroup != nil {
  					lead = entry.captureGroup.minimumVideoLead
  				}
@@ -282,7 +310,7 @@
  				return airplay.VideoPreparationResult{MinimumVideoLead: lead}, nil
  			}
  			return airplay.VideoPreparationResult{}, fmt.Errorf("receiver changed video from %s %dx%d to %s %dx%d during setup",
-@@ -1199,11 +1206,11 @@
+@@ -1199,11 +1226,11 @@
  	current, ok := d.streams[target]
  	if !ok || current != entry {
  		// Stream was cancelled while we were setting up
@@ -296,7 +324,7 @@
  		cleanup.run()
  		return
  	}
-@@ -1215,7 +1222,7 @@
+@@ -1215,7 +1242,7 @@
  	current.client = client
  	current.sink = sink
  	current.audioMuted = false
@@ -305,7 +333,7 @@
  
  	log.Printf("[daemon] streaming to %s (%s) at %dx%d using %s",
  		info.Name, target, selectedCaptureKey.maxWidth, selectedCaptureKey.maxHeight, selectedCaptureKey.codec)
-@@ -1259,7 +1266,7 @@
+@@ -1259,7 +1286,7 @@
  	if d.streams[target] == entry {
  		cleanup = d.detachStreamLocked(target)
  	}
@@ -314,7 +342,7 @@
  	cleanup.run()
  
  	if audioCapture != nil {
-@@ -1353,7 +1360,7 @@
+@@ -1353,7 +1380,7 @@
  	key := normalizedVideoCaptureKey(width, height, codec)
  	d.mu.Lock()
  	if d.streams[entry.deviceIP] != entry {
@@ -323,7 +351,7 @@
  		return nil, 0, context.Canceled
  	}
  	if d.captureGroups == nil {
-@@ -1362,7 +1369,7 @@
+@@ -1362,7 +1389,7 @@
  	if group := d.captureGroups[key]; group != nil {
  		entry.captureGroup = group
  		broadcast := group.broadcast
@@ -332,7 +360,7 @@
  		preparation.Close()
  		if broadcast == nil {
  			return nil, 0, fmt.Errorf("capture group %dx%d has no broadcast", key.maxWidth, key.maxHeight)
-@@ -1374,7 +1381,7 @@
+@@ -1374,7 +1401,7 @@
  	group := &videoCaptureGroup{key: key, cancel: captureCancel}
  	d.captureGroups[key] = group
  	entry.captureGroup = group
@@ -341,7 +369,7 @@
  
  	capture, err := preparation.StartWithContextAndCodec(captureCtx, key.maxWidth, key.maxHeight, key.codec)
  	if err != nil {
-@@ -1386,7 +1393,7 @@
+@@ -1386,7 +1413,7 @@
  		if entry.captureGroup == group {
  			entry.captureGroup = nil
  		}
@@ -350,7 +378,7 @@
  		return nil, 0, err
  	}
  
-@@ -1403,7 +1410,7 @@
+@@ -1403,7 +1430,7 @@
  			if entry.captureGroup == group {
  				entry.captureGroup = nil
  			}
@@ -359,7 +387,7 @@
  			return nil, 0, fmt.Errorf("measure production HEVC timing: %w", err)
  		}
  		log.Printf("[daemon] production HEVC timing for %dx%d requires at least %v video lead", key.maxWidth, key.maxHeight, minimumVideoLead)
-@@ -1412,7 +1419,7 @@
+@@ -1412,7 +1439,7 @@
  	broadcast := airplay.NewBroadcastCaptureWithFrameRate(capture, d.cfg.FPS)
  	d.mu.Lock()
  	if d.captureGroups[key] != group || d.streams[entry.deviceIP] != entry || entry.captureGroup != group {
@@ -368,7 +396,7 @@
  		captureCancel()
  		capture.Stop()
  		return nil, 0, context.Canceled
-@@ -1421,7 +1428,7 @@
+@@ -1421,7 +1448,7 @@
  	group.capture = capture
  	group.minimumVideoLead = minimumVideoLead
  	d.streamWorkers.Add(1)
@@ -377,7 +405,7 @@
  
  	go func() {
  		defer d.streamWorkers.Done()
-@@ -1459,7 +1466,7 @@
+@@ -1459,7 +1486,7 @@
  	key := normalizedVideoCaptureKey(maxW, maxH, codec)
  	d.mu.Lock()
  	if d.streams[entry.deviceIP] != entry {
@@ -386,7 +414,7 @@
  		return nil, context.Canceled
  	}
  	if d.captureGroups == nil {
-@@ -1468,7 +1475,7 @@
+@@ -1468,7 +1495,7 @@
  	if group := d.captureGroups[key]; group != nil {
  		entry.captureGroup = group
  		broadcast := group.broadcast
@@ -395,7 +423,7 @@
  		if broadcast == nil {
  			return nil, fmt.Errorf("capture group %dx%d has no broadcast", key.maxWidth, key.maxHeight)
  		}
-@@ -1482,7 +1489,7 @@
+@@ -1482,7 +1509,7 @@
  	group := &videoCaptureGroup{key: key, cancel: captureCancel}
  	d.captureGroups[key] = group
  	entry.captureGroup = group
@@ -404,7 +432,7 @@
  
  	capCfg := airplay.CaptureConfig{
  		FPS:          d.cfg.FPS,
-@@ -1518,14 +1525,14 @@
+@@ -1518,14 +1545,14 @@
  		if entry.captureGroup == group {
  			entry.captureGroup = nil
  		}
@@ -421,7 +449,7 @@
  		captureCancel()
  		capture.Stop()
  		return nil, context.Canceled
-@@ -1535,7 +1542,7 @@
+@@ -1535,7 +1562,7 @@
  	// Add while holding d.mu so Shutdown cannot begin waiting between publishing
  	// the capture and registering its completion worker.
  	d.streamWorkers.Add(1)
@@ -430,7 +458,7 @@
  
  	go func() {
  		defer d.streamWorkers.Done()
-@@ -1637,7 +1644,7 @@
+@@ -1637,7 +1664,7 @@
  	// An intentionally stopped group can finish after another capture with the
  	// same dimensions has already started. Never tear down that replacement.
  	if d.captureGroups[group.key] != group || group.broadcast != broadcast {
@@ -439,7 +467,7 @@
  		return
  	}
  	inUse := d.captureGroupInUseLocked(group)
-@@ -1648,7 +1655,7 @@
+@@ -1648,7 +1675,7 @@
  	// A capture failure affects only receivers consuming this encoded canvas;
  	// other resolution groups continue streaming.
  	cleanup := d.detachCaptureGroupStreamsLocked(group)
@@ -448,7 +476,7 @@
  
  	if unexpected {
  		log.Printf("[daemon] %dx%d capture error: %v", group.key.maxWidth, group.key.maxHeight, runErr)
-@@ -1664,7 +1671,7 @@
+@@ -1664,7 +1691,7 @@
  		_, ok := d.streams[req.Target]
  		if !ok {
  			response := Response{OK: false, State: d.overallStateLocked(), Error: "no active stream to " + req.Target}
@@ -457,7 +485,7 @@
  			return response
  		}
  		cleanup := d.detachStreamLocked(req.Target)
-@@ -1675,7 +1682,7 @@
+@@ -1675,7 +1702,7 @@
  		if tracked {
  			d.streamWorkers.Add(1)
  		}
@@ -466,7 +494,7 @@
  		cleanup.run()
  		if tracked {
  			d.streamWorkers.Done()
-@@ -1689,7 +1696,7 @@
+@@ -1689,7 +1716,7 @@
  	if tracked {
  		d.streamWorkers.Add(1)
  	}
@@ -475,7 +503,7 @@
  	cleanup.run()
  	if tracked {
  		d.streamWorkers.Done()
-@@ -1705,7 +1712,7 @@
+@@ -1705,7 +1732,7 @@
  		entry, ok := d.streams[req.Target]
  		if !ok {
  			state := d.overallStateLocked()
@@ -484,7 +512,7 @@
  			return Response{OK: false, State: state, Error: "no active stream to " + req.Target}
  		}
  		targets = []*activeStream{entry}
-@@ -1719,7 +1726,7 @@
+@@ -1719,7 +1746,7 @@
  
  	if len(targets) == 0 {
  		resp := d.statusResponseLocked(false, "not currently streaming")
@@ -493,7 +521,7 @@
  		return resp
  	}
  
-@@ -1729,7 +1736,7 @@
+@@ -1729,7 +1756,7 @@
  			sessions = append(sessions, t.session)
  		}
  	}
@@ -502,7 +530,7 @@
  
  	var lastErr error
  	for _, s := range sessions {
-@@ -1739,7 +1746,7 @@
+@@ -1739,7 +1766,7 @@
  	}
  	if lastErr != nil {
  		d.mu.Lock()
@@ -511,7 +539,7 @@
  		return d.statusResponseLocked(false, "failed to update audio mute state: "+lastErr.Error())
  	}
  
-@@ -1747,7 +1754,7 @@
+@@ -1747,7 +1774,7 @@
  	for _, t := range targets {
  		t.audioMuted = muted
  	}
@@ -520,7 +548,7 @@
  	return d.statusResponseLocked(true, "")
  }
  
-@@ -1781,3 +1788,54 @@
+@@ -1781,3 +1808,54 @@
  	}
  	return infos
  }
